@@ -1,0 +1,38 @@
+# Dependencies & build artifacts
+vendor/
+node_modules/
+public/build/
+public/hot
+storage/logs/*.log
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/testing/*
+storage/app/private/*
+.phpunit.result.cache
+coverage/
+.phpunit.cache/
+
+# Environment (never ship real .env; .env.example is committed)
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+.github/
+
+# Docs that belong to the repo, not the image (keep image lean)
+*.md
+PRD.md
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docker/compose overrides
+docker-compose.override.yml
