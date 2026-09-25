@@ -98,9 +98,27 @@ curl -X POST http://localhost:8000/api/mock-payments \
 # 400 {"status":"rejected","message":"Event ID reused with different payload"}
 ```
 
-## Deploy (Render)
+## Deploy
 
-Pakai Render Blueprint — container app + Postgres free sekaligus:
+### Opsi A: Hugging Face Spaces (gratis, tanpa kartu) — REKOMENDASI
+
+App + DB gratis, tidak perlu kartu kredit.
+
+1. **Database**: daftar [neon.tech](https://neon.tech) (gratis) → buat project → copy connection string. Di Neon: `postgresql://user:pass@host/db?sslmode=require`. Catat host/user/pass/db.
+2. **Space**: buka [huggingface.co/new-space](https://huggingface.co/new-space) → nama `jualemas` → **SDK: Docker** → **Dockerfile** → buat Space.
+3. **Push kode** (repo ini sudah punya Dockerfile + `docker/nginx.conf` + `docker/entrypoint.sh` + `README.hf.md`):
+   ```
+   git remote add hf https://huggingface.co/spaces/<username>/jualemas
+   git push hf master
+   ```
+4. **Set environment di Space** (Settings → Variables and secrets) — lihat tabel di `README.hf.md`.
+5. Buka Space → app jalan di `https://<username>-jualemas.hf.space`.
+
+Entrypoint otomatis: tunggu DB → `migrate` → `db:seed` → start nginx+php-fpm.
+
+### Opsi B: Render Blueprint (butuh kartu untuk free Postgres)
+
+Pakai Render Blueprint — container app + Postgres free sekaligus, tapi **free DB Render expired 30 hari** dan **minta verifikasi kartu** saat buat Blueprint.
 
 1. Fork/push repo ini ke GitHub.
 2. Buka https://dashboard.render.com/blueprints → **New Blueprint Instance** → connect repo.

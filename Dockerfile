@@ -1,38 +1,41 @@
 FROM php:8.4-fpm
 
-# System deps needed to compile PHP extensions (libpq for pdo_pgsql)
+# System deps (libpq for pdo_pgsql, nginx)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libpq-dev \
-        libonig-dev \
-        libxml2-dev \
-        zip \
-        unzip \
-        git \
-        curl \
+        libpq-dev libonig-dev libxml2-dev zip unzip git curl nginx \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ext-pcntl required by the concurrency test (pcntl_fork); bcmath for money-safe math
+# PHP extensions
 RUN docker-php-ext-install pdo_pgsql mbstring pcntl bcmath
 
-# Composer (official image)
+# Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
-# Install runtime dependencies with scripts disabled (artisan is not present yet;
-# package:discover/post-autoload run later after source copy)
+# Install dependencies (scripts off until source present)
 COPY composer.json composer.lock ./
 RUN composer install --no-interaction --prefer-dist --no-dev --ignore-platform-reqs --no-scripts \
     && composer clear-cache
 
-# Application source (vendor/ excluded via .dockerignore)
+# App source
 COPY --chown=www-data:www-data . /var/www/html
 
-# Now run the framework's post-install scripts (package discovery)
+# Post-install scripts
 RUN composer dump-autoload --no-interaction --classmap-authoritative
 
+# Nginx config for Laravel
+COPY docker/nginx.conf /etc/nginx/sites-available/jualemas
+RUN ln -sf /etc/nginx/sites-available/jualemas /etc/nginx/sites-enabled/jualemas \
+    && rm -f /etc/nginx/sites-enabled/default
+
+# Entrypoint: migrate+seed real DB, then start nginx+php-fpm
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Storage permissions
 RUN chown -R www-data:www-data storage bootstrap/cache
 
-EXPOSE 8000
+EXPOSE 80
 
-CMD php artisan serve --host=0.0.0.0 --port=8000
+CMD ["/entrypoint.sh"]
