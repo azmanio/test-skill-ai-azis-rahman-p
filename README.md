@@ -98,6 +98,22 @@ curl -X POST http://localhost:8000/api/mock-payments \
 # 400 {"status":"rejected","message":"Event ID reused with different payload"}
 ```
 
+## Deploy (Render)
+
+Pakai Render Blueprint — container app + Postgres free sekaligus:
+
+1. Fork/push repo ini ke GitHub.
+2. Buka https://dashboard.render.com/blueprints → **New Blueprint Instance** → connect repo.
+3. Render baca `render.yaml` → buat service `jualemas` (Docker) + DB `jualemas-db` (Postgres) otomatis.
+4. **Set `PAYMENT_TOKEN`** di dashboard service → Environment (Render tanya karena `sync: false`). Contoh: `rahasia-token-produksi`.
+5. Deploy otomatis jalan; preDeployCommand menjalankan `migrate` + `db:seed` sebelum app start.
+6. Buka URL service (`https://jualemas.onrender.com`).
+
+Catatan:
+- Free tier: idle 15 menit → sleep, cold start 30–60 detik. Cocok demo/test.
+- DB free Render **expired 30 hari** — untuk demo singkat cukup. Kalau mau permanen: pakai Neon Postgres + set `DB_*` manual.
+- `php artisan serve` (di Dockerfile) single-threaded — cukup untuk test skill, bukan produksi tinggi.
+
 ## Work time
 
 ```text

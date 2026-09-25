@@ -1,0 +1,62 @@
+# Render Blueprint — deploy app + Postgres untuk test-skill-ai-azis-rahman-p
+# Pakai: render.com dashboard → Blueprint → connect repo ini.
+# Ganti appName kalau sudah dipakai di Render.
+
+services:
+  - type: web
+    name: jualemas
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_URL
+        value: https://jualemas.onrender.com
+      - key: APP_KEY
+        generateValue: true
+      - key: PAYMENT_TOKEN
+        sync: false
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_HOST
+        fromDatabase:
+          name: jualemas-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: jualemas-db
+          property: port
+      - key: DB_DATABASE
+        fromDatabase:
+          name: jualemas-db
+          property: database
+      - key: DB_USERNAME
+        fromDatabase:
+          name: jualemas-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: jualemas-db
+          property: password
+      - key: SESSION_DRIVER
+        value: database
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: CACHE_STORE
+        value: database
+    disk:
+      name: laravel-storage
+      mountPath: /var/www/html/storage
+      sizeGB: 1
+    # Migrate + seed jalan sekali sebelum app start
+    preDeployCommand: php artisan migrate --force --no-interaction && php artisan db:seed --force --no-interaction
+
+databases:
+  - name: jualemas-db
+    plan: free
+    databaseName: jualemas
+    user: jualemas
