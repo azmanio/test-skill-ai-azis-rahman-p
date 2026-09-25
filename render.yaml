@@ -1,6 +1,6 @@
-# Render Blueprint — deploy app + Postgres untuk test-skill-ai-azis-rahman-p
-# Pakai: render.com dashboard → Blueprint → connect repo ini.
-# Ganti appName kalau sudah dipakai di Render.
+# Render Blueprint — deploy app (free, cardless) + pakai Neon Postgres eksternal (cardless).
+# IMPORTANT: JANGAN buat Render Postgres → itu pemicu minta kartu.
+# DB_* diisi manual dari Neon (host/port/db/user/password).
 
 services:
   - type: web
@@ -23,40 +23,24 @@ services:
       - key: DB_CONNECTION
         value: pgsql
       - key: DB_HOST
-        fromDatabase:
-          name: jualemas-db
-          property: host
+        sync: false
       - key: DB_PORT
-        fromDatabase:
-          name: jualemas-db
-          property: port
+        value: "5432"
       - key: DB_DATABASE
-        fromDatabase:
-          name: jualemas-db
-          property: database
+        sync: false
       - key: DB_USERNAME
-        fromDatabase:
-          name: jualemas-db
-          property: user
+        sync: false
       - key: DB_PASSWORD
-        fromDatabase:
-          name: jualemas-db
-          property: password
+        sync: false
+      - key: DB_SSLMODE
+        value: require
       - key: SESSION_DRIVER
         value: database
       - key: QUEUE_CONNECTION
         value: database
       - key: CACHE_STORE
         value: database
-    disk:
-      name: laravel-storage
-      mountPath: /var/www/html/storage
-      sizeGB: 1
-    # Migrate + seed jalan sekali sebelum app start
-    preDeployCommand: php artisan migrate --force --no-interaction && php artisan db:seed --force --no-interaction
+    # NOTE: Migrate + seed di-handle oleh docker/entrypoint.sh (idempotent, jalan tiap start).
+    # preDeployCommand TIDAK dipakai — tidak didukung di Render Web Service free.
 
-databases:
-  - name: jualemas-db
-    plan: free
-    databaseName: jualemas
-    user: jualemas
+# NOTE: Tanpa blok `databases:` — DB eksternal Neon, bukan Render Postgres.

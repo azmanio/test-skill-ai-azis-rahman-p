@@ -116,21 +116,19 @@ App + DB gratis, tidak perlu kartu kredit.
 
 Entrypoint otomatis: tunggu DB → `migrate` → `db:seed` → start nginx+php-fpm.
 
-### Opsi B: Render Blueprint (butuh kartu untuk free Postgres)
+### Opsi B: Render (Web Service free — cardless, pakai Neon DB)
 
-Pakai Render Blueprint — container app + Postgres free sekaligus, tapi **free DB Render expired 30 hari** dan **minta verifikasi kartu** saat buat Blueprint.
+App jalan native di Web Service Render, tanpa perlu buat Render Postgres (yang minta kartu):
 
-1. Fork/push repo ini ke GitHub.
-2. Buka https://dashboard.render.com/blueprints → **New Blueprint Instance** → connect repo.
-3. Render baca `render.yaml` → buat service `jualemas` (Docker) + DB `jualemas-db` (Postgres) otomatis.
-4. **Set `PAYMENT_TOKEN`** di dashboard service → Environment (Render tanya karena `sync: false`). Contoh: `rahasia-token-produksi`.
-5. Deploy otomatis jalan; preDeployCommand menjalankan `migrate` + `db:seed` sebelum app start.
-6. Buka URL service (`https://jualemas.onrender.com`).
+1. **Daftar [render.com](https://render.com)** (bisa pakai GitHub login, tanpa kartu untuk free instance).
+2. **DB**: pakai [neon.tech](https://neon.tech) (gratis, cardless) → buat project → copy connection string.
+3. **New → Web Service** → connect repo GitHub ini.
+4. Pilih **Runtime: Docker**, Region bebas.
+5. **Environment** (Advanced): set semua dari tabel `README.hf.md` (APP_KEY, DB_*, PAYMENT_TOKEN, dll).
+6. Deploy → app jalan di `https://<nama>.onrender.com`.
 
-Catatan:
-- Free tier: idle 15 menit → sleep, cold start 30–60 detik. Cocok demo/test.
-- DB free Render **expired 30 hari** — untuk demo singkat cukup. Kalau mau permanen: pakai Neon Postgres + set `DB_*` manual.
-- `php artisan serve` (di Dockerfile) single-threaded — cukup untuk test skill, bukan produksi tinggi.
+`render.yaml` juga disediakan (Blueprint) untuk referensi — tapi pakai cara manual di atas lebih jelas & cardless karena gak buat Postgres Render.
+Catatan: free tier idle 15 menit → sleep, cold start 30–60 detik.
 
 ## Work time
 
