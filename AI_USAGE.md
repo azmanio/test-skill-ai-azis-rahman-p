@@ -105,7 +105,7 @@ Tidak semua suggestion langsung diterima. Berikut beberapa koreksi selama implem
 
 7. Deployment runtime:
     - Gejala: mapping Compose menggunakan `8000:8000`, sedangkan image final menjalankan nginx dan PHP-FPM pada port 80.
-    - Penyebab: mapping Compose masih memakai port 8000, sedangkan image final menjalankan nginx dan PHP-FPM pada port 80.
+    - Penyebab: mapping Compose dan image final memakai port berbeda.
     - Perbaikan: mapping Compose, port runtime, dan dokumentasi diselaraskan.
     - Verifikasi: build image dan startup image dijalankan tanpa memakai `php artisan serve`.
 

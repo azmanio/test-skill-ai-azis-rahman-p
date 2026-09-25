@@ -168,7 +168,7 @@ Quick Tunnel hanya digunakan untuk demo, bukan deployment produksi.
 Isi nilai berikut melalui dashboard Render:
 
 - `PAYMENT_TOKEN`
-- `DB_URL`, yaitu connection string PostgreSQL dari provider DB
+- `DB_URL`, yaitu connection string PostgreSQL dari provider DB. Sertakan parameter `sslmode=require` di URL tersebut.
 - `APP_URL`, jika dashboard tidak menetapkannya otomatis
 - `TRUSTED_PROXIES=*`, karena Render meneruskan request melalui proxy internal
 
