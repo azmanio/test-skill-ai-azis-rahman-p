@@ -1,46 +1,37 @@
-# Render Blueprint — deploy app (free, cardless) + pakai Neon Postgres eksternal (cardless).
-# IMPORTANT: JANGAN buat Render Postgres → itu pemicu minta kartu.
-# DB_* diisi manual dari Neon (host/port/db/user/password).
-
 services:
   - type: web
     name: jualemas
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    autoDeploy: true
+    healthCheckPath: /up
     envVars:
       - key: APP_ENV
         value: production
       - key: APP_DEBUG
         value: "false"
-      - key: APP_URL
-        value: https://jualemas.onrender.com
       - key: APP_KEY
         generateValue: true
+      - key: APP_URL
+        sync: false
       - key: PAYMENT_TOKEN
         sync: false
       - key: DB_CONNECTION
         value: pgsql
-      - key: DB_HOST
-        sync: false
-      - key: DB_PORT
-        value: "5432"
-      - key: DB_DATABASE
-        sync: false
-      - key: DB_USERNAME
-        sync: false
-      - key: DB_PASSWORD
+      - key: DB_URL
         sync: false
       - key: DB_SSLMODE
         value: require
       - key: SESSION_DRIVER
         value: database
-      - key: QUEUE_CONNECTION
-        value: database
       - key: CACHE_STORE
         value: database
-    # NOTE: Migrate + seed di-handle oleh docker/entrypoint.sh (idempotent, jalan tiap start).
-    # preDeployCommand TIDAK dipakai — tidak didukung di Render Web Service free.
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: TRUSTED_PROXIES
+        value: "*"
+      - key: SEED_DATABASE
+        value: "false"
 
-# NOTE: Tanpa blok `databases:` — DB eksternal Neon, bukan Render Postgres.
+# PostgreSQL harus disediakan dari provider terpisah, misalnya Neon.
+# Nilai DB_URL dan PAYMENT_TOKEN diisi melalui dashboard Render.

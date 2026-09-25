@@ -1,159 +1,210 @@
-# Mini Checkout Emas — Jualemas (Test Skill AI)
+# Mini Checkout Emas — Jualemas
 
-Aplikasi simulasi katalog → checkout → reservasi stok → pending order → mock payment → paid order. Dibuat untuk test skill full stack (brief JEINDO / JUALEMAS.ID).
+Aplikasi Laravel untuk alur katalog, checkout, reservasi stok, dan mock payment. Implementasi mengikuti brief JEINDO/JUALEMAS.ID.
 
-## Stack
+## Teknologi
 
-Laravel 13 · PHP 8.4 · Blade · PostgreSQL 17 · Docker Compose · PHPUnit
+- Laravel 13 dan PHP 8.4
+- Blade
+- PostgreSQL 17
+- Docker Compose
+- PHPUnit 12
 
-## Requirements
+## Menjalankan Lokal
 
-Docker Engine + Docker Compose v2. PHP dan Composer tidak perlu terpasang di host — semua berjalan di dalam container.
-
-## Docker setup
+Host hanya membutuhkan Docker Engine dan Docker Compose v2.
 
 ```bash
 cp .env.example .env
-docker compose exec app php artisan key:generate
+docker compose build app
+docker compose run --rm --no-deps --user "$(id -u):$(id -g)" \
+  --entrypoint php app artisan key:generate --force
 docker compose up -d
 ```
 
-Container: `jualemas-app` (Laravel) dan `jualemas-postgres` (PostgreSQL 17). Compose menunggu postgres sehat (`pg_isready`) sebelum app mulai.
+Buka `http://localhost:8000`. Container `jualemas-app` menjalankan migration. Untuk database kosong, jalankan `docker compose exec app php artisan db:seed --force` satu kali setelah container siap. `SEED_DATABASE` sengaja tidak diaktifkan secara default agar restart tidak mengembalikan stok demo.
 
-Setelah up, jalankan migrasi dan seed:
-
-```bash
-docker compose exec app php artisan migrate:fresh --seed
-```
-
-### Check container
+Perintah operasional:
 
 ```bash
 docker compose ps
+docker compose logs -f app
+docker compose exec app php artisan test
 ```
 
-### Logs
+Untuk mulai dari database kosong:
 
 ```bash
-docker compose logs -f app
-docker compose logs -f postgres
+docker compose exec app php artisan migrate:fresh --seed --force
 ```
 
-### Data seed (sesuai brief)
+Perintah tersebut menghapus isi database. Jangan menjalankannya pada database yang berisi order yang perlu disimpan.
 
-| Produk         | Harga satuan | Stok |
-| -------------- | -----------: | ---: |
-| Antam 1 gram    | 1.500.000    |    1 |
-| UBS 1 gram      | 1.450.000    |    3 |
-| Emasku 0.5 gram |   750.000    |    0 |
-
-Seeder idempotent (`updateOrCreate`), aman dijalankan ulang.
-
-### Run application
-
-```
-http://localhost:8000
+```bash
+docker compose down
 ```
 
-Root redirect ke katalog. Checkout web redirect ke halaman detail order.
+Perintah tersebut menghentikan container dan mempertahankan volume PostgreSQL. Untuk menghapus database beserta datanya:
 
-### Run tests
+```bash
+docker compose down -v
+```
+
+## Data Awal
+
+| Produk | Harga | Stok |
+| --- | ---: | ---: |
+| Antam 1 gram | Rp1.500.000 | 1 |
+| UBS 1 gram | Rp1.450.000 | 3 |
+| Emasku 0.5 gram | Rp750.000 | 0 |
+
+Seeder berjalan eksplisit dan menggunakan `updateOrCreate`. Karena itu, `db:seed` menulis ulang harga dan stok demo. Gunakan `migrate:fresh --seed` hanya saat memang ingin mengembalikan data demo ke keadaan awal.
+
+## Endpoint
+
+### `POST /api/checkout`
+
+```json
+{
+  "product_id": 1,
+  "quantity": 1
+}
+```
+
+Respons `201` berisi order dan snapshot harga. `product_id` atau quantity yang tidak valid menghasilkan `422`. Stok tidak cukup menghasilkan `409`.
+
+### `POST /api/mock-payments`
+
+Header wajib: `X-Payment-Token`.
+
+```json
+{
+  "event_id": "evt-001",
+  "order_number": "ORD-...",
+  "amount": 1500000,
+  "status": "paid"
+}
+```
+
+Event pertama untuk order pending menghasilkan `accepted`. Event identik berikutnya menghasilkan `already_processed`. `event_id` yang sama dengan payload berbeda ditolak. Nominal dan status harus sesuai dengan order.
+
+Contoh:
+
+```bash
+curl -X POST http://localhost:8000/api/mock-payments \
+  -H 'X-Payment-Token: local-test-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"event_id":"evt-001","order_number":"ORD-...","amount":1500000,"status":"paid"}'
+```
+
+## Contoh cURL
+
+Gunakan `ORDER_NUMBER` dari respons checkout dan sesuaikan `EVENT_ID` serta nominal dengan order tersebut.
+
+```bash
+# Payment berhasil
+curl -X POST http://localhost:8000/api/mock-payments \
+  -H 'X-Payment-Token: local-test-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"event_id":"evt-001","order_number":"ORDER_NUMBER","amount":1500000,"status":"paid"}'
+# {"status":"accepted"}
+
+# Event yang sama dikirim ulang
+curl -X POST http://localhost:8000/api/mock-payments \
+  -H 'X-Payment-Token: local-test-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"event_id":"evt-001","order_number":"ORDER_NUMBER","amount":1500000,"status":"paid"}'
+# {"status":"already_processed"}
+
+# Token salah
+curl -X POST http://localhost:8000/api/mock-payments \
+  -H 'X-Payment-Token: wrong-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"event_id":"evt-002","order_number":"ORDER_NUMBER","amount":1500000,"status":"paid"}'
+# 400 {"status":"rejected","message":"Invalid or missing payment token"}
+
+# Nominal salah
+curl -X POST http://localhost:8000/api/mock-payments \
+  -H 'X-Payment-Token: local-test-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"event_id":"evt-003","order_number":"ORDER_NUMBER","amount":1000,"status":"paid"}'
+# 400 {"status":"rejected","message":"Invalid amount"}
+
+# Event ID sama dengan payload berbeda
+curl -X POST http://localhost:8000/api/mock-payments \
+  -H 'X-Payment-Token: local-test-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"event_id":"evt-001","order_number":"ORDER_NUMBER","amount":999999,"status":"paid"}'
+# 400 {"status":"rejected","message":"Event ID reused with different payload"}
+```
+
+## Aturan Transaksi
+
+- `CheckoutService` mengambil harga dari database; harga pada request client diabaikan.
+- Product dibaca dengan `lockForUpdate()` di dalam `DB::transaction()`. Dua checkout bersamaan tidak dapat melewati pemeriksaan stok yang sama.
+- Order menyimpan `checkout_price` dan `total` sebagai snapshot.
+- Stok dikurangi saat checkout, bukan saat payment.
+- `products.stock >= 0` juga dijamin oleh database constraint.
+- `PaymentService` mengunci order, memeriksa nominal, lalu menyimpan event payment.
+- `payment_events.event_id` unik. SHA-256 payload membedakan retry yang sama dari penyalahgunaan event ID.
+- Payment untuk order yang sudah paid ditolak.
+
+## Demo HTTPS Lokal
+
+Cloudflare Quick Tunnel dapat digunakan untuk menunjukkan aplikasi selama laptop, Docker, dan `cloudflared` tetap berjalan:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8000
+```
+
+Set `APP_URL` ke URL yang dicetak tunnel sebelum menjalankan container. Tunnel memakai domain acak `trycloudflare.com` dan tidak mempunyai SLA. Kegagalan atau penghentian proses akan menghentikan akses publik.
+
+Quick Tunnel hanya digunakan untuk demo, bukan deployment produksi.
+
+## Deploy Persisten
+
+`render.yaml` menyediakan konfigurasi Docker Web Service gratis. PostgreSQL harus berasal dari provider terpisah, misalnya Neon. Jangan membuat Render Postgres dari blueprint ini.
+
+Isi nilai berikut melalui dashboard Render:
+
+- `PAYMENT_TOKEN`
+- `DB_URL`, yaitu connection string PostgreSQL dari provider DB
+- `APP_URL`, jika dashboard tidak menetapkannya otomatis
+- `TRUSTED_PROXIES=*`, karena Render meneruskan request melalui proxy internal
+
+Set `SEED_DATABASE=false` setelah seeding awal. Jalankan `php artisan db:seed --force` secara manual bila membutuhkan data demo.
+
+Nginx memakai variabel `PORT` jika tersedia dan default `80` pada provider lain. `APP_DEBUG` harus bernilai `false`.
+
+Belum ada deployment persisten ke provider yang dijalankan dalam verifikasi repository ini. Konfigurasi lokal dan alur HTTPS melalui Quick Tunnel yang telah diuji.
+
+## Test
 
 ```bash
 docker compose exec app php artisan test
 ```
 
-Test memakai database PostgreSQL terpisah (`jualemas_test`), bukan database aplikasi. Isolasi memakai `RefreshDatabase` / `DatabaseMigrations`. Termasuk test concurrency: dua checkout bersamaan di stok 1 → hanya satu yang berhasil, satu ditolak, stok menjadi 0.
+Database test adalah `jualemas_test`. Database aplikasi `jualemas` tidak digunakan oleh `RefreshDatabase`. Test mencakup:
 
-## Mock payment
+- validasi request;
+- ignorasi harga client;
+- price snapshot;
+- reservasi stok;
+- payment idempotency;
+- penolakan nominal/status yang salah;
+- dua proses checkout bersamaan pada stok satu.
 
-`POST /api/mock-payments`, wajib header `X-Payment-Token` (nilai dari `PAYMENT_TOKEN` di `.env` — contoh: `local-test-token`). Ganti `ORD-...` dengan nomor order hasil checkout.
+## Asumsi dan Batasan
 
-```bash
-# Payment berhasil
-curl -X POST http://localhost:8000/api/mock-payments \
-  -H "X-Payment-Token: local-test-token" -H "Content-Type: application/json" \
-  -d '{"event_id":"evt-001","order_number":"ORD-...","amount":1500000,"status":"paid"}'
-# {"status":"accepted"}
+- Payment adalah simulasi; tidak ada integrasi payment gateway.
+- Tidak ada autentikasi, keranjang multibproduk, atau halaman pengaturan stok.
+- Stok direservasi ketika checkout dan tidak dikembalikan ketika order pending dibatalkan secara otomatis karena fitur tersebut di luar scope.
+- Test concurrency memakai proses fork lokal, bukan uji beban.
+- Quick Tunnel tidak cocok untuk production atau SLA.
 
-# Event sama dikirim ulang
-# {"status":"already_processed"}
+## Waktu Pengerjaan
 
-# Token salah
-curl -X POST http://localhost:8000/api/mock-payments \
-  -H "X-Payment-Token: wrong" -H "Content-Type: application/json" \
-  -d '{"event_id":"evt-002","order_number":"ORD-...","amount":1500000,"status":"paid"}'
-# 400 {"status":"rejected","message":"Invalid or missing payment token"}
+- Brief diterima sekitar 24 September 2026 pukul 10:12 WIB.
+- Pengerjaan dimulai sekitar 12:28 WIB, saat istirahat siang.
 
-# Nominal salah
-curl -X POST http://localhost:8000/api/mock-payments \
-  -H "X-Payment-Token: local-test-token" -H "Content-Type: application/json" \
-  -d '{"event_id":"evt-003","order_number":"ORD-...","amount":1000,"status":"paid"}'
-# 400 {"status":"rejected","message":"Invalid amount"}
-
-# Event ID dipakai ulang dengan payload berbeda
-curl -X POST http://localhost:8000/api/mock-payments \
-  -H "X-Payment-Token: local-test-token" -H "Content-Type: application/json" \
-  -d '{"event_id":"evt-001","order_number":"ORD-...","amount":999999,"status":"paid"}'
-# 400 {"status":"rejected","message":"Event ID reused with different payload"}
-```
-
-## Deploy
-
-### Opsi A: Hugging Face Spaces (gratis, tanpa kartu) — REKOMENDASI
-
-App + DB gratis, tidak perlu kartu kredit.
-
-1. **Database**: daftar [neon.tech](https://neon.tech) (gratis) → buat project → copy connection string. Di Neon: `postgresql://user:pass@host/db?sslmode=require`. Catat host/user/pass/db.
-2. **Space**: buka [huggingface.co/new-space](https://huggingface.co/new-space) → nama `jualemas` → **SDK: Docker** → **Dockerfile** → buat Space.
-3. **Push kode** (repo ini sudah punya Dockerfile + `docker/nginx.conf` + `docker/entrypoint.sh` + `README.hf.md`):
-   ```
-   git remote add hf https://huggingface.co/spaces/<username>/jualemas
-   git push hf master
-   ```
-4. **Set environment di Space** (Settings → Variables and secrets) — lihat tabel di `README.hf.md`.
-5. Buka Space → app jalan di `https://<username>-jualemas.hf.space`.
-
-Entrypoint otomatis: tunggu DB → `migrate` → `db:seed` → start nginx+php-fpm.
-
-### Opsi B: Render (Web Service free — cardless, pakai Neon DB)
-
-App jalan native di Web Service Render, tanpa perlu buat Render Postgres (yang minta kartu):
-
-1. **Daftar [render.com](https://render.com)** (bisa pakai GitHub login, tanpa kartu untuk free instance).
-2. **DB**: pakai [neon.tech](https://neon.tech) (gratis, cardless) → buat project → copy connection string.
-3. **New → Web Service** → connect repo GitHub ini.
-4. Pilih **Runtime: Docker**, Region bebas.
-5. **Environment** (Advanced): set semua dari tabel `README.hf.md` (APP_KEY, DB_*, PAYMENT_TOKEN, dll).
-6. Deploy → app jalan di `https://<nama>.onrender.com`.
-
-`render.yaml` juga disediakan (Blueprint) untuk referensi — tapi pakai cara manual di atas lebih jelas & cardless karena gak buat Postgres Render.
-Catatan: free tier idle 15 menit → sleep, cold start 30–60 detik.
-
-## Work time
-
-```text
-Menerima soal: 24 Sep 2026, 10:12 WIB
-Mulai proses:  12:28 WIB (istirahat siang)
-Selesai:       21:30 WIB, 24 Sep 2026
-Durasi aktif:  ± 4-5 jam
-```
-
-Brief menargetkan 3 jam; deadline dari HC 25 Sep 12:00 WIB.
-
-## Assumptions
-
-- Simulasi lokal, tanpa payment gateway sungguhan.
-- Token payment hanya untuk development.
-- `docker compose down` menghentikan container tanpa menghapus data; `down -v` ikut menghapus volume `postgres_data`.
-
-## Limitations
-
-- Tidak ada login, keranjang multiproduk, expiry/cancel order, atau halaman kelola stok — semua di luar scope brief (brief hanya mensyaratkan stok berkurang saat checkout dan tidak pernah negatif).
-- Tidak ada retry otomatis saat deadlock — mengandalkan locking PostgreSQL.
-- Feedback memakai SweetAlert2 via CDN (fallback `alert()` native jika offline); qty divalidasi di klien, tetapi keputusan akhir tetap di server.
-
-## Concurrency strategy
-
-- Checkout: `DB::transaction` + `lockForUpdate()` pada row produk (`SELECT ... FOR UPDATE`). Lock dipegang sampai commit/rollback; request kedua menunggu lock, lalu melihat stok sisa dan ditolak (409) jika kurang. Check constraint `products.stock >= 0` menjadi pengaman terakhir.
-- Payment: `lockForUpdate()` pada row order; `event_id` unique; `payload_hash` (SHA-256) untuk membedakan event sama-payload sama (→ `already_processed`) dengan event sama-payload berbeda (→ ditolak). Stok tidak dikurangi saat payment — sudah di-reserve ketika checkout.
+Durasi aktif tidak dicatat sebagai estimasi presisi dalam repository.

@@ -1,27 +1,52 @@
 #!/bin/sh
-set -e
+set -eu
 
-# Storage & bootstrap cache must be writable
-mkdir -p storage/framework/{cache/data,sessions,views} storage/logs bootstrap/cache
+mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
 chown -R www-data:www-data storage bootstrap/cache
 
-# Wait for Postgres (Neon) to be reachable before migrating
-if [ -n "$DB_HOST" ]; then
-  echo "Waiting for DB at $DB_HOST:${DB_PORT:-5432}..."
-  i=0
-  while ! php -r "try { new PDO('pgsql:host=' . getenv('DB_HOST') . ';port=' . (getenv('DB_PORT') ?: '5432') . ';dbname=' . getenv('DB_DATABASE'), getenv('DB_USERNAME'), getenv('DB_PASSWORD')); echo 'ok'; } catch (Exception \$e) { exit(1); }" 2>/dev/null | grep -q ok; do
-    i=$((i+1))
-    if [ $i -ge 30 ]; then echo "DB not reachable after 30 tries"; exit 1; fi
-    echo "  retry $i..."
+attempt=1
+until su -s /bin/sh www-data -c "php artisan migrate --force --no-interaction"; do
+    if [ "$attempt" -ge 30 ]; then
+        echo "Database unavailable after 30 migration attempts." >&2
+        exit 1
+    fi
+
+    attempt=$((attempt + 1))
+    echo "Migration failed; retrying (${attempt}/30)..." >&2
     sleep 2
-  done
-  echo "DB reachable."
+done
+
+if [ "${SEED_DATABASE:-false}" = "true" ]; then
+    su -s /bin/sh www-data -c "php artisan db:seed --force --no-interaction"
 fi
 
-# Run migrations + seed (idempotent)
-su -s /bin/sh www-data -c "php artisan migrate --force --no-interaction" || true
-su -s /bin/sh www-data -c "php artisan db:seed --force --no-interaction" || true
+port="${PORT:-80}"
+case "$port" in
+    ''|*[!0-9]*)
+        echo "PORT must be a number." >&2
+        exit 1
+        ;;
+esac
 
-# Start nginx (foreground) + php-fpm
-php-fpm &
-nginx -g 'daemon off;'
+sed "s/listen 80;/listen $port;/" /etc/nginx/sites-available/jualemas \
+    > /etc/nginx/sites-available/jualemas.runtime
+ln -sf /etc/nginx/sites-available/jualemas.runtime /etc/nginx/sites-enabled/jualemas
+
+php-fpm -F &
+php_pid=$!
+nginx -g 'daemon off;' &
+nginx_pid=$!
+
+shutdown() {
+    kill "$php_pid" "$nginx_pid" 2>/dev/null || true
+    wait "$php_pid" "$nginx_pid" 2>/dev/null || true
+}
+trap shutdown EXIT INT TERM
+
+while kill -0 "$php_pid" 2>/dev/null && kill -0 "$nginx_pid" 2>/dev/null; do
+    sleep 2 &
+    wait $! || true
+done
+
+shutdown
+wait "$php_pid" "$nginx_pid" 2>/dev/null || true

@@ -1,63 +1,128 @@
-# AI_USAGE.md
+# AI Usage
 
-## Alat & model
+## Tool dan model
 
 - Tool: Hermes Agent (Nous Research)
-- Model: my-power (Hermes agent runtime)
+- Model: my-power
 
 ## Bagian yang dibantu AI
 
-Arsitektur & transaction boundary, migration/schema PostgreSQL, controller/service layer, automated tests (checkout, payment, concurrency), Docker (Dockerfile, compose.yaml), dokumentasi, debugging.
+AI juga digunakan dalam requirement analysis, implementasi, debugging, review, dokumentasi, dan persiapan deployment. Developer memeriksa hasil AI, menjalankan test, dan memverifikasi alur aplikasi secara manual.
 
-## Tiga prompt penting
+## Prompt penting
 
-### 1. Arsitektur transaksi + locking
+### 1. Checkout concurrency
 
-Prompt: "Rancang checkout dengan DB transaction dan row locking PostgreSQL agar aman terhadap concurrent checkout."
+Prompt:
 
-- AI suggestion: `lockForUpdate()` pada produk di dalam `DB::transaction`, validasi stok setelah lock, snapshot harga dari DB.
-- Accepted: alur lock → validasi → snapshot → create order → decrement stock → commit.
-- Changed: dipindah dari controller ke service layer (`CheckoutService`) supaya dipakai web form dan API sekaligus.
-- Why: satu sumber business logic, tidak duplikasi di dua controller.
+```text
+Rancang checkout dengan PostgreSQL transaction dan row locking agar dua request bersamaan tidak sama-sama mengambil stok terakhir.
+```
 
-### 2. Payment idempotency + event fingerprint
+Saran AI: gunakan `DB::transaction()` dan `lockForUpdate()`, lalu validasi stok setelah lock.
 
-Prompt: "Payment harus idempotent; event_id unik; event_id dipakai ulang dengan payload berbeda harus ditolak."
+Diterima: transaksi tetap di `CheckoutService`; stok baru diperiksa setelah row lock terbaca, lalu order dibuat dan stok dikurangi.
 
-- AI suggestion: cek `PaymentEvent::where(event_id)` sebelum transaksi, simpan SHA-256 payload.
-- Accepted: simpan `payload_hash` (SHA-256 ter-normalisasi) + unique constraint `event_id`.
-- Changed: cek idempotency dipindah ke dalam transaction di bawah `lockForUpdate()` — jika cek dilakukan di luar transaksi, dua request event sama yang masuk bersamaan bisa terkena unique violation (500).
-- Why: idempotent tetap aman meskipun dua event sama masuk bersamaan.
+Diubah: pemeriksaan harga server-side dan snapshot ditambahkan agar request client tidak menentukan nilai transaksi.
+
+Alasan: lock melindungi stok, sedangkan snapshot mempertahankan harga ketika katalog berubah.
+
+Verifikasi: test checkout biasa, manipulasi harga, price snapshot, dan test concurrency menggunakan dua proses.
+
+### 2. Payment idempotency
+
+Prompt:
+
+```text
+Payment harus idempotent. Event identik boleh diulang, tetapi event_id yang sama dengan payload berbeda harus ditolak.
+```
+
+Saran AI: simpan `event_id` dan fingerprint payload, lalu periksa keduanya saat payment.
+
+Diterima: `event_id` unik, payload di-hash, dan status order dikunci selama proses.
+
+Diubah: pengecekan idempotency dipindahkan ke dalam transaksi agar request bersamaan tetap aman.
+
+Alasan: pemeriksaan di luar transaksi tidak memberi lock yang sama pada order dan event.
+
+Verifikasi: test payment valid, duplicate event, event ID dengan payload berbeda, order pending, order paid, token salah, dan nominal salah.
 
 ### 3. Test concurrency nyata
 
-Prompt: "Buat automated test dua checkout bersamaan stok=1 → 1 sukses 1 ditolak."
+Prompt:
 
-- AI suggestion: pakai `pcntl_fork` dua proses PHP, masing-masing menjalankan `CheckoutService` di PostgreSQL yang sama.
-- Accepted: fork + `DB::purge()` per child + exit code 0/1.
-- Changed: tiap child memanggil service langsung (bukan melalui HTTP) agar tidak memerlukan server; ada sleep 50ms supaya lock benar-benar bertabrakan.
-- Why: PHPUnit berjalan sequential, tanpa fork tidak bisa membuktikan race.
+```text
+Buat test dua checkout bersamaan pada stok satu; hanya satu yang boleh berhasil.
+```
 
-## Verifikasi hasil AI
+Saran AI: jalankan dua proses PHP terhadap PostgreSQL yang sama.
 
-- Semua diverifikasi melalui `php artisan test` — 23 test hijau (69 assertions), termasuk concurrency test dengan fork.
-- Hasil lock dicek manual via psql (stok dan orders akhir setelah concurrency test).
-- Beberapa bug ditemukan saat review (di bawah), bukan sekadar asumsi "AI bener saja".
+Diterima: `pcntl_fork()`, reset connection database di child process, lalu bandingkan hasil kedua proses.
 
-## Bug yang ditemukan (saat review / testing)
+Diubah: child memanggil service langsung, bukan HTTP, agar test tidak bergantung pada server yang sedang berjalan.
 
-1. **CSRF 419 di test web checkout** — Laravel 13 mengganti middleware CSRF (`VerifyCsrfToken` → `ValidateCsrfToken`). Fix: `$this->withoutMiddleware()` di test. Verified: test hijau.
-2. **Race check event_id di luar transaction** — dua request payload sama yang concurrent bisa 500 (unique violation tidak tertangkap). Fix: re-check di dalam transaction di bawah lock. Verified: test duplicate idempotent + event reuse hijau.
-3. **Response shape salah** — service mengembalikan `[0 => 'accepted']` bukan `['status' => 'accepted']`. Fix: `return ['status' => ...]`. Verified: `valid_payment_accepted` hijau.
-4. **Test suite menghapus data DB aplikasi** — `DB_DATABASE` di `compose.yaml environment:` meng-override `phpunit.xml` (env proses menang atas `<env force>`), sehingga `RefreshDatabase` migrate:fresh berjalan di DB app (`jualemas`), bukan test DB. Gejala: katalog kosong setelah test. Fix: hapus `DB_DATABASE` dari compose `environment:` — app mengambil dari `.env`, test dari phpunit.xml (`jualemas_test`). Verified: PROBE_DB=jualemas_test + data app utuh setelah test.
-5. **Catch exception salah class** — controller menangkap `Illuminate\Http\Exceptions\HttpException`, tapi service melempar `Symfony\Component\HttpKernel\Exception\HttpException` → web checkout stok kurang menampilkan stack trace. Fix: catch class Symfony. Verified: redirect "Stok tidak mencukupi" tanpa stack trace.
-6. **SweetAlert tidak muncul untuk qty invalid** — validasi HTML native (`min=1`, `required`) memblokir submit sebelum handler JS berjalan (form tidak pernah dispatch submit event). Fix: `novalidate` di form + validasi client-side sendiri. Verified: toast muncul untuk qty=0 dan qty>stok.
+Alasan: ini menguji row lock dan transaksi tanpa menambah server test.
 
-## Hal yang masih belum yakin
+Verifikasi: satu order berhasil, satu request ditolak, dan stok akhir nol.
 
-- Concurrency test memakai fork lokal, bukan simulasi beban tinggi. Locking-nya sama dengan produksi (row lock PostgreSQL), sehingga tidak ada risiko overselling — tetapi throughput memang bukan scope.
-- Simulasi lokal: tanpa payment gateway sungguhan, tanpa auth user, tanpa retry policy.
+## Verifikasi terhadap hasil AI
 
-## Data privacy
+Tidak semua suggestion langsung diterima. Berikut beberapa koreksi selama implementasi dan review:
 
-Hanya data fiktif dari brief. Tidak ada kredensial nyata, data pelanggan, atau kode perusahaan sebelumnya. Token payment `local-test-token` (development only).
+1. CSRF test:
+    - Gejala: test web checkout menghasilkan `419`.
+    - Penyebab: test form tidak melalui browser session.
+    - Perbaikan: middleware CSRF dimatikan pada test web tersebut; aplikasi runtime tetap memakai CSRF.
+    - Verifikasi: test checkout web lulus.
+
+2. Race pada payment:
+    - Gejala: pemeriksaan event di luar transaksi berisiko menghasilkan unique violation saat request sama datang bersamaan.
+    - Perbaikan: event diperiksa di dalam transaksi di bawah lock order.
+    - Verifikasi: test duplicate payment lulus.
+
+3. Exception class:
+    - Gejala: stok kurang menampilkan stack trace dari web controller.
+    - Penyebab: controller menangkap class exception yang keliru.
+    - Perbaikan: gunakan `Symfony\Component\HttpKernel\Exception\HttpException`, sama dengan class yang dilempar service.
+    - Verifikasi: browser menampilkan “Stok tidak mencukupi” tanpa trace.
+
+4. Validasi quantity:
+    - Gejala: validasi native HTML menahan submit sebelum handler JavaScript berjalan.
+    - Perbaikan: form memakai `novalidate`; validasi client-side dan server-side tetap keduanya ada.
+    - Verifikasi: quantity nol dan quantity melebihi stok ditolak.
+
+5. Test database isolation:
+    - Gejala: test dapat membaca `DB_DATABASE` dari process environment sebelum memakai `phpunit.xml`.
+    - Penyebab: `force` pada elemen `<env>` saja belum menimpa seluruh jalur konfigurasi.
+    - Perbaikan: nilai test dipaksa melalui elemen `<server>` dan regression test memeriksa database aktif.
+    - Verifikasi: 24 test, 70 assertions; stok database aplikasi tetap sama sebelum dan sesudah suite.
+
+6. HTTPS URL:
+    - Gejala: form pada Quick Tunnel menghasilkan action HTTP.
+    - Penyebab: Laravel belum mempercayai forwarded header dari proxy.
+    - Perbaikan: `TRUSTED_PROXIES` dikonfigurasi pada middleware.
+    - Verifikasi: form memakai action HTTPS dan checkout melalui tunnel berhasil.
+
+7. Deployment runtime:
+    - Gejala: mapping Compose menggunakan `8000:8000`, sedangkan image final menjalankan nginx dan PHP-FPM pada port 80.
+    - Penyebab: mapping Compose masih memakai port 8000, sedangkan image final menjalankan nginx dan PHP-FPM pada port 80.
+    - Perbaikan: mapping Compose, port runtime, dan dokumentasi diselaraskan.
+    - Verifikasi: build image dan startup image dijalankan tanpa memakai `php artisan serve`.
+
+8. Seeder dan reset data:
+    - Gejala: menjalankan `db:seed` pada setiap restart akan menulis ulang stok demo.
+    - Penyebab: seeder menggunakan `updateOrCreate`, sehingga nilai awal dianggap sebagai data yang boleh dipulihkan.
+    - Perbaikan: seeding dijalankan eksplisit; runtime menggunakan `SEED_DATABASE=false` setelah setup.
+    - Verifikasi: `migrate:fresh --seed` mengembalikan `Antam 1`, `UBS 3`, `Emasku 0`; restart setelah reset tidak mengubah data.
+
+## Keterbatasan dan ketidakpastian
+
+- Test concurrency menggunakan dua proses lokal. Ini memeriksa mekanisme lock, bukan throughput produksi.
+- Payment memakai simulator, bukan payment gateway sungguhan.
+- Tidak ada cancellation order atau release reservasi otomatis karena fitur tersebut di luar scope.
+- Quick Tunnel tidak mempunyai SLA. Link demo hanya aktif selama proses lokal berjalan.
+- Deployment persisten belum dijalankan terhadap akun provider. `render.yaml` adalah konfigurasi, bukan bukti deployment berhasil.
+
+## Privasi data
+
+Seluruh nama produk, order, dan payment event berasal dari brief atau data uji sintetis. Tidak ada data pelanggan, credential provider, atau kode perusahaan sebelumnya dalam repository.
